@@ -37,7 +37,7 @@ jobs:
       - name: Update last deployed branch
         if: success()
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
           DEPLOYED_BRANCH: ${{ inputs.branch_to_deploy }}
         run: |
           echo "Updating last deployed branch to: $DEPLOYED_BRANCH"
