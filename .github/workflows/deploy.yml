@@ -1,0 +1,46 @@
+name: Demo Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch_to_deploy:
+        description: "Branch to simulate deployment from"
+        required: true
+        default: "main"
+        type: string
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: NCAP-NONPROD
+
+    steps:
+      - name: Checkout selected branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch_to_deploy }}
+
+      - name: Run Python application
+        run: |
+          python src/app.py
+
+      - name: Simulate deployment
+        run: |
+          echo "Deploying branch: ${{ inputs.branch_to_deploy }}"
+          echo "Deployment simulation completed successfully."
+
+      - name: Update last deployed branch
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEPLOYED_BRANCH: ${{ inputs.branch_to_deploy }}
+        run: |
+          echo "Updating last deployed branch to: $DEPLOYED_BRANCH"
+
+          gh variable set NCAP_NONPROD_LAST_DEPLOYED_BRANCH             --env NCAP-NONPROD             --body "$DEPLOYED_BRANCH"
+
+          echo "GitHub Environment variable updated."
