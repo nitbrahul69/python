@@ -23,24 +23,25 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.branch_to_deploy }}
+          fetch-depth: 0
 
       - name: Run Python application
-        run: |
-          python src/app.py
+        run: python src/app.py
 
       - name: Simulate deployment
         run: |
-          echo "Deploying branch: ${{ inputs.branch_to_deploy }}"
-          echo "Deployment simulation completed successfully."
+          echo "Simulating NCAP Non-Prod deployment"
+          echo "Branch: ${{ inputs.branch_to_deploy }}"
+          echo "Deployment completed successfully."
 
       - name: Update last deployed branch
         if: success()
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           DEPLOYED_BRANCH: ${{ inputs.branch_to_deploy }}
         run: |
           echo "Updating last deployed branch to: $DEPLOYED_BRANCH"
 
           gh variable set NCAP_NONPROD_LAST_DEPLOYED_BRANCH             --env NCAP-NONPROD             --body "$DEPLOYED_BRANCH"
 
-          echo "GitHub Environment variable updated."
+          echo "Last deployed branch updated successfully."

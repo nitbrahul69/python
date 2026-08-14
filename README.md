@@ -1,38 +1,26 @@
-# NCAP GHA Last Deployed Branch Demo
+# NCAP GHA Branch Automation Demo
 
-Small Python project to test the GitHub Actions approach for storing the last successfully deployed branch in a GitHub Environment variable.
+Personal GitHub demo for testing the NCAP deployment-branch approach.
 
-## What this demo does
+## One-time setup
 
-1. `deploy.yml` simulates a deployment.
-2. Only after a successful deployment, it updates the GitHub Environment variable:
-   `NCAP_NONPROD_LAST_DEPLOYED_BRANCH`
-3. `create-deployment-branch.yml` reads that variable and creates a new branch from it.
+1. GitHub repo -> Settings -> Environments -> New environment
+2. Create environment: `NCAP-NONPROD`
+3. GitHub repo -> Settings -> Actions -> General
+4. Under Workflow permissions select `Read and write permissions`
+5. Save.
 
-## GitHub setup
-
-Create a GitHub Environment named:
-
-`NCAP-NONPROD`
-
-No Environment variable needs to be created manually. The deployment workflow creates/updates it.
-
-### Important permissions
-
-The workflow needs permission to update repository Environment variables. The demo uses `GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}` and `actions: write`.
-
-If your organization restricts this token, use an approved GitHub App/PAT instead.
+No PAT or manually-created GITHUB_TOKEN secret is required.
 
 ## Test
 
-1. Push this project to a GitHub repository.
-2. Run **Demo Deploy** manually and enter:
-   `main`
-3. It will simulate deployment and then set:
-   `NCAP_NONPROD_LAST_DEPLOYED_BRANCH=main`
-4. Run **Create Deployment Branch**.
-5. Enter a new branch name such as:
+1. Actions -> Demo Deploy -> Run workflow
+2. Enter `main`
+3. After successful deployment, the workflow updates:
+   `NCAP_NONPROD_LAST_DEPLOYED_BRANCH`
+4. Actions -> Create Deployment Branch -> Run workflow
+5. Enter a new branch such as:
    `release/081426_v1PSUP`
-6. The workflow reads the environment variable and creates the new branch from the saved branch.
+6. The workflow creates it from the saved last-deployed branch.
 
-For a realistic test, create another branch, run Demo Deploy using that branch, and then run Create Deployment Branch again.
+The environment variable is updated only after a successful deployment.
