@@ -3,5 +3,5 @@ def main():
     print("Deployment simulation successful.")
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":;;
     main()
