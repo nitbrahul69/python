@@ -4,19 +4,25 @@ on:
   workflow_dispatch:
     inputs:
       new_branch:
-        description: "New deployment branch name"
+        description: "New release branch name"
         required: true
         type: string
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
-  create-branch:
+  create-branches-and-pr:
     runs-on: ubuntu-latest
+
     environment: NCAP-NONPROD
 
     steps:
+
+      # ---------------------------------------------------
+      # 1. Read last successfully deployed branch
+      # ---------------------------------------------------
       - name: Read last deployed branch
         id: last-branch
         env:
@@ -24,43 +30,135 @@ jobs:
         run: |
           if [ -z "$LAST_DEPLOYED_BRANCH" ]; then
             echo "ERROR: NCAP_NONPROD_LAST_DEPLOYED_BRANCH is empty."
-            echo "Run Demo Deploy successfully first."
+            echo "Run a successful deployment first."
             exit 1
           fi
 
           echo "Last deployed branch: $LAST_DEPLOYED_BRANCH"
+
           echo "last_branch=$LAST_DEPLOYED_BRANCH" >> "$GITHUB_OUTPUT"
 
+
+      # ---------------------------------------------------
+      # 2. Checkout last deployed branch
+      # ---------------------------------------------------
       - name: Checkout last deployed branch
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.last-branch.outputs.last_branch }}
           fetch-depth: 0
 
-      - name: Validate new branch
+
+      # ---------------------------------------------------
+      # 3. Validate release branch
+      # ---------------------------------------------------
+      - name: Validate release branch
         env:
-          NEW_BRANCH: ${{ inputs.new_branch }}
+          RELEASE_BRANCH: ${{ inputs.new_branch }}
         run: |
-          if [ -z "$NEW_BRANCH" ]; then
-            echo "ERROR: New branch name is empty."
+
+          if [ -z "$RELEASE_BRANCH" ]; then
+            echo "ERROR: Release branch name is empty."
             exit 1
           fi
 
-          if git ls-remote --exit-code --heads origin "$NEW_BRANCH" >/dev/null 2>&1; then
-            echo "ERROR: Branch '$NEW_BRANCH' already exists."
+          # Make sure release branch follows expected naming convention
+          if [[ ! "$RELEASE_BRANCH" =~ ^release/ ]]; then
+            echo "ERROR: Release branch must start with 'release/'."
+            echo "Example: release/081726_v6PSUP"
             exit 1
           fi
 
-      - name: Create and push deployment branch
+          # Create staging branch name
+          STAGING_BRANCH="staging/${RELEASE_BRANCH#release/}"
+
+          echo "Release branch : $RELEASE_BRANCH"
+          echo "Staging branch : $STAGING_BRANCH"
+
+          # Check release branch already exists
+          if git ls-remote --exit-code --heads origin "$RELEASE_BRANCH" >/dev/null 2>&1; then
+            echo "ERROR: Release branch '$RELEASE_BRANCH' already exists."
+            exit 1
+          fi
+
+          # Check staging branch already exists
+          if git ls-remote --exit-code --heads origin "$STAGING_BRANCH" >/dev/null 2>&1; then
+            echo "ERROR: Staging branch '$STAGING_BRANCH' already exists."
+            exit 1
+          fi
+
+
+      # ---------------------------------------------------
+      # 4. Create Release and Staging branches
+      # ---------------------------------------------------
+      - name: Create release and staging branches
         env:
-          NEW_BRANCH: ${{ inputs.new_branch }}
+          RELEASE_BRANCH: ${{ inputs.new_branch }}
         run: |
+
           LAST_BRANCH="${{ steps.last-branch.outputs.last_branch }}"
 
-          echo "Source branch: $LAST_BRANCH"
-          echo "New branch: $NEW_BRANCH"
+          STAGING_BRANCH="staging/${RELEASE_BRANCH#release/}"
 
-          git checkout -b "$NEW_BRANCH"
-          git push origin "$NEW_BRANCH"
+          echo "=========================================="
+          echo "Source branch  : $LAST_BRANCH"
+          echo "Release branch : $RELEASE_BRANCH"
+          echo "Staging branch : $STAGING_BRANCH"
+          echo "=========================================="
 
-          echo "Deployment branch created successfully."
+          # ---------------------------------------------
+          # Create Release Branch
+          # ---------------------------------------------
+          git checkout "$LAST_BRANCH"
+
+          git checkout -b "$RELEASE_BRANCH"
+
+          git push origin "$RELEASE_BRANCH"
+
+          echo "Release branch created successfully."
+
+
+          # ---------------------------------------------
+          # Create Staging Branch
+          # ---------------------------------------------
+          git checkout "$LAST_BRANCH"
+
+          git checkout -b "$STAGING_BRANCH"
+
+          git push origin "$STAGING_BRANCH"
+
+          echo "Staging branch created successfully."
+
+
+      # ---------------------------------------------------
+      # 5. Create Staging -> Release Pull Request
+      # ---------------------------------------------------
+      - name: Create staging to release PR
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          RELEASE_BRANCH: ${{ inputs.new_branch }}
+        run: |
+
+          STAGING_BRANCH="staging/${RELEASE_BRANCH#release/}"
+
+          echo "Creating Pull Request..."
+
+          echo "Source : $STAGING_BRANCH"
+          echo "Target : $RELEASE_BRANCH"
+
+          gh pr create \
+            --base "$RELEASE_BRANCH" \
+            --head "$STAGING_BRANCH" \
+            --title "Merge $STAGING_BRANCH into $RELEASE_BRANCH" \
+            --body "Automated Pull Request created for deployment preparation.
+
+          Source Branch:
+          $STAGING_BRANCH
+
+          Target Branch:
+          $RELEASE_BRANCH
+
+          Last Deployed Branch:
+          ${{ steps.last-branch.outputs.last_branch }}"
+
+          echo "Pull Request created successfully."
