@@ -146,6 +146,17 @@ jobs:
           echo "Source : $STAGING_BRANCH"
           echo "Target : $RELEASE_BRANCH"
 
+          # Ensure remote refs are available
+          git fetch origin "$RELEASE_BRANCH" "$STAGING_BRANCH" || true
+
+          # Check for commits on staging that are not on release
+          COMMIT_COUNT=$(git rev-list --count "origin/$RELEASE_BRANCH..origin/$STAGING_BRANCH" || echo 0)
+
+          if [ "$COMMIT_COUNT" -eq 0 ]; then
+            echo "No commits between $STAGING_BRANCH and $RELEASE_BRANCH; skipping PR creation."
+            exit 0
+          fi
+
           gh pr create \
             --base "$RELEASE_BRANCH" \
             --head "$STAGING_BRANCH" \
