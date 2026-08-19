@@ -1,5 +1,5 @@
 def main():
-    print("NCAP GHA Demo Application test")
+    print("NCAP GHA Demo Application test one more time")
     print("Deployment simulation successful.")
 
 
