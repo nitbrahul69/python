@@ -222,7 +222,7 @@ jobs:
       # ---------------------------------------------------
       - name: Create staging to release PR
         env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
+          GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
           RELEASE_BRANCH: ${{ steps.branch-names.outputs.release_branch }}
           STAGING_BRANCH: ${{ steps.branch-names.outputs.staging_branch }}
         run: |
@@ -231,6 +231,8 @@ jobs:
 
           echo "Source : $STAGING_BRANCH"
           echo "Target : $RELEASE_BRANCH"
+          echo "Source ref: refs/heads/$STAGING_BRANCH"
+          echo "Target ref: refs/heads/$RELEASE_BRANCH"
 
           if [[ "$RELEASE_BRANCH" != release/* ]]; then
             echo "ERROR: Invalid release PR target: '$RELEASE_BRANCH'"
@@ -268,13 +270,20 @@ jobs:
           Last Deployed Branch:
           ${{ steps.last-branch.outputs.last_branch }}"
 
+          REPOSITORY_OWNER="${GITHUB_REPOSITORY%%/*}"
+          PR_TITLE="Merge $STAGING_BRANCH into $RELEASE_BRANCH"
+
+          echo "Creating PR with explicit values:"
+          echo "  head: $REPOSITORY_OWNER:$STAGING_BRANCH"
+          echo "  base: $RELEASE_BRANCH"
+
           # Use the REST API so both refs are sent explicitly. This prevents
           # the CLI or repository default branch from becoming the PR target.
           PR_RESPONSE="$(gh api \
             --method POST \
             "/repos/$GITHUB_REPOSITORY/pulls" \
-            -f title="Merge $STAGING_BRANCH into $RELEASE_BRANCH" \
-            -f head="$STAGING_BRANCH" \
+            -f title="$PR_TITLE" \
+            -f head="$REPOSITORY_OWNER:$STAGING_BRANCH" \
             -f base="$RELEASE_BRANCH" \
             -f body="$PR_BODY")"
 
@@ -286,6 +295,8 @@ jobs:
             echo "ERROR: Pull request refs do not match the requested branches."
             echo "Created base: $CREATED_BASE"
             echo "Created head: $CREATED_HEAD"
+            echo "Requested base: $RELEASE_BRANCH"
+            echo "Requested head: $STAGING_BRANCH"
             exit 1
           fi
 
