@@ -232,6 +232,21 @@ jobs:
           echo "Source : $STAGING_BRANCH"
           echo "Target : $RELEASE_BRANCH"
 
+          if [[ "$RELEASE_BRANCH" != release/* ]]; then
+            echo "ERROR: Invalid release PR target: '$RELEASE_BRANCH'"
+            exit 1
+          fi
+
+          if [[ "$STAGING_BRANCH" != staging/* ]]; then
+            echo "ERROR: Invalid staging PR source: '$STAGING_BRANCH'"
+            exit 1
+          fi
+
+          if [ "$RELEASE_BRANCH" = "main" ] || [ "$RELEASE_BRANCH" = "master" ]; then
+            echo "ERROR: Refusing to create a pull request targeting '$RELEASE_BRANCH'."
+            exit 1
+          fi
+
           if ! git ls-remote --exit-code --heads origin "$RELEASE_BRANCH" >/dev/null 2>&1; then
             echo "ERROR: Release target branch '$RELEASE_BRANCH' does not exist."
             exit 1
@@ -242,12 +257,7 @@ jobs:
             exit 1
           fi
 
-          gh pr create \
-            --repo "$GITHUB_REPOSITORY" \
-            --base "$RELEASE_BRANCH" \
-            --head "$STAGING_BRANCH" \
-            --title "Merge $STAGING_BRANCH into $RELEASE_BRANCH" \
-            --body "Automated Pull Request created for deployment preparation.
+          PR_BODY="Automated Pull Request created for deployment preparation.
 
           Source Branch:
           $STAGING_BRANCH
@@ -258,4 +268,25 @@ jobs:
           Last Deployed Branch:
           ${{ steps.last-branch.outputs.last_branch }}"
 
-          echo "Pull Request created successfully."
+          # Use the REST API so both refs are sent explicitly. This prevents
+          # the CLI or repository default branch from becoming the PR target.
+          PR_RESPONSE="$(gh api \
+            --method POST \
+            "/repos/$GITHUB_REPOSITORY/pulls" \
+            -f title="Merge $STAGING_BRANCH into $RELEASE_BRANCH" \
+            -f head="$STAGING_BRANCH" \
+            -f base="$RELEASE_BRANCH" \
+            -f body="$PR_BODY")"
+
+          CREATED_BASE="$(printf '%s' "$PR_RESPONSE" | jq -r '.base.ref')"
+          CREATED_HEAD="$(printf '%s' "$PR_RESPONSE" | jq -r '.head.ref')"
+          CREATED_URL="$(printf '%s' "$PR_RESPONSE" | jq -r '.html_url')"
+
+          if [ "$CREATED_BASE" != "$RELEASE_BRANCH" ] || [ "$CREATED_HEAD" != "$STAGING_BRANCH" ]; then
+            echo "ERROR: Pull request refs do not match the requested branches."
+            echo "Created base: $CREATED_BASE"
+            echo "Created head: $CREATED_HEAD"
+            exit 1
+          fi
+
+          echo "Pull Request created successfully: $CREATED_URL"
