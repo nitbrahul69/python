@@ -150,26 +150,24 @@ jobs:
           echo "Staging branch : $STAGING_BRANCH"
           echo "=========================================="
 
-          # ---------------------------------------------
-          # Create Release Branch
-          # ---------------------------------------------
-          git checkout "$LAST_BRANCH"
+          SOURCE_SHA="$(git rev-parse "origin/$LAST_BRANCH")"
+          echo "Source commit   : $SOURCE_SHA"
 
-          git checkout -b "$RELEASE_BRANCH"
-
-          git push origin "$RELEASE_BRANCH"
+          # Push the exact source commit directly to each remote ref. This
+          # avoids detached/local checkout issues on the Actions runner.
+          if ! git push origin "$SOURCE_SHA:refs/heads/$RELEASE_BRANCH"; then
+            echo "ERROR: Could not create release branch '$RELEASE_BRANCH'."
+            echo "The branch may have been created concurrently or the token lacks contents:write permission."
+            exit 1
+          fi
 
           echo "Release branch created successfully."
 
-
-          # ---------------------------------------------
-          # Create Staging Branch
-          # ---------------------------------------------
-          git checkout "$LAST_BRANCH"
-
-          git checkout -b "$STAGING_BRANCH"
-
-          git push origin "$STAGING_BRANCH"
+          if ! git push origin "$SOURCE_SHA:refs/heads/$STAGING_BRANCH"; then
+            echo "ERROR: Could not create staging branch '$STAGING_BRANCH'."
+            echo "The branch may have been created concurrently or the token lacks contents:write permission."
+            exit 1
+          fi
 
           echo "Staging branch created successfully."
 
@@ -195,8 +193,8 @@ jobs:
 
           echo "Annotating README on $STAGING_BRANCH to ensure PR has changes..."
 
-          git fetch origin
-          git checkout "$STAGING_BRANCH"
+          git fetch origin "+refs/heads/$STAGING_BRANCH:refs/remotes/origin/$STAGING_BRANCH"
+          git checkout -B "$STAGING_BRANCH" "origin/$STAGING_BRANCH"
 
           README=README.md
 
@@ -232,7 +230,18 @@ jobs:
           echo "Source : $STAGING_BRANCH"
           echo "Target : $RELEASE_BRANCH"
 
+          if ! git ls-remote --exit-code --heads origin "$RELEASE_BRANCH" >/dev/null 2>&1; then
+            echo "ERROR: Release target branch '$RELEASE_BRANCH' does not exist."
+            exit 1
+          fi
+
+          if ! git ls-remote --exit-code --heads origin "$STAGING_BRANCH" >/dev/null 2>&1; then
+            echo "ERROR: Staging source branch '$STAGING_BRANCH' does not exist."
+            exit 1
+          fi
+
           gh pr create \
+            --repo "$GITHUB_REPOSITORY" \
             --base "$RELEASE_BRANCH" \
             --head "$STAGING_BRANCH" \
             --title "Merge $STAGING_BRANCH into $RELEASE_BRANCH" \
