@@ -25,6 +25,105 @@ jobs:
           ref: ${{ inputs.branch_to_deploy }}
           fetch-depth: 0
 
+      - name: Check deployment safety
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          LAST_DEPLOYED_BRANCH: ${{ vars.NCAP_NONPROD_LAST_DEPLOYED_BRANCH }}
+          BRANCH_TO_DEPLOY: ${{ inputs.branch_to_deploy }}
+        run: |
+          set -euo pipefail
+
+          # The initial main-branch deployment is the bootstrap deployment.
+          # Release deployments require the Git-history safety comparison.
+          if [[ ! "$BRANCH_TO_DEPLOY" =~ ^release/[0-9]{6}_v[0-9]+PSUP$ ]]; then
+            echo "Branch is not a PSUP release branch: $BRANCH_TO_DEPLOY"
+            echo "Final decision: SAFE TO DEPLOY"
+            exit 0
+          fi
+
+          if [ -z "$LAST_DEPLOYED_BRANCH" ]; then
+            echo "ERROR: NCAP_NONPROD_LAST_DEPLOYED_BRANCH is empty."
+            echo "Final decision: BLOCKED"
+            exit 1
+          fi
+
+          if ! git ls-remote --exit-code --heads origin "$LAST_DEPLOYED_BRANCH" >/dev/null 2>&1; then
+            echo "ERROR: Last deployed branch does not exist: $LAST_DEPLOYED_BRANCH"
+            echo "Final decision: BLOCKED"
+            exit 1
+          fi
+
+          if ! git ls-remote --exit-code --heads origin "$BRANCH_TO_DEPLOY" >/dev/null 2>&1; then
+            echo "ERROR: Branch being deployed does not exist: $BRANCH_TO_DEPLOY"
+            echo "Final decision: BLOCKED"
+            exit 1
+          fi
+
+          # fetch-depth: 0 above provides the complete history needed here.
+          git fetch --prune origin \
+            "+refs/heads/$LAST_DEPLOYED_BRANCH:refs/remotes/origin/$LAST_DEPLOYED_BRANCH" \
+            "+refs/heads/$BRANCH_TO_DEPLOY:refs/remotes/origin/$BRANCH_TO_DEPLOY"
+
+          LAST_DEPLOYED_SHA="$(git rev-parse "origin/$LAST_DEPLOYED_BRANCH")"
+          BRANCH_SHA="$(git rev-parse "origin/$BRANCH_TO_DEPLOY")"
+          BASE_SHA="$(git merge-base "$LAST_DEPLOYED_SHA" "$BRANCH_SHA")"
+
+          echo "Last deployed branch : $LAST_DEPLOYED_BRANCH"
+          echo "Last deployed commit : $LAST_DEPLOYED_SHA"
+          echo "Branch being deployed: $BRANCH_TO_DEPLOY"
+          echo "Branch commit        : $BRANCH_SHA"
+          echo "Common ancestor      : $BASE_SHA"
+
+          LAST_DEPLOYED_FILES="$(mktemp)"
+          BRANCH_FILES="$(mktemp)"
+          CONFLICTING_FILES="$(mktemp)"
+          trap 'rm -f "$LAST_DEPLOYED_FILES" "$BRANCH_FILES" "$CONFLICTING_FILES"' EXIT
+
+          git diff --name-only "$BASE_SHA" "$LAST_DEPLOYED_SHA" | sort -u > "$LAST_DEPLOYED_FILES"
+          git diff --name-only "$BASE_SHA" "$BRANCH_SHA" | sort -u > "$BRANCH_FILES"
+          comm -12 "$LAST_DEPLOYED_FILES" "$BRANCH_FILES" > "$CONFLICTING_FILES"
+
+          echo "Changed files in last deployed branch:"
+          if [ -s "$LAST_DEPLOYED_FILES" ]; then sed 's/^/- /' "$LAST_DEPLOYED_FILES"; else echo "- none"; fi
+
+          echo "Changed files in branch being deployed:"
+          if [ -s "$BRANCH_FILES" ]; then sed 's/^/- /' "$BRANCH_FILES"; else echo "- none"; fi
+
+          if [ -s "$CONFLICTING_FILES" ]; then
+            echo ""
+            echo "DEPLOYMENT WARNING:"
+            echo "This release branch was created before the latest deployment."
+            echo "Potentially conflicting changes were detected."
+            echo ""
+            echo "Branch being deployed: $BRANCH_TO_DEPLOY"
+            echo "Latest deployed branch: $LAST_DEPLOYED_BRANCH"
+            echo ""
+            echo "Potentially affected files:"
+            sed 's/^/- /' "$CONFLICTING_FILES"
+            echo ""
+            echo "Please review the changes before deployment."
+            echo "Final decision: BLOCKED"
+
+            {
+              echo "## :warning: DEPLOYMENT WARNING"
+              echo
+              echo "Potentially conflicting changes were detected."
+              echo
+              echo "- Branch being deployed: $BRANCH_TO_DEPLOY"
+              echo "- Latest deployed branch: $LAST_DEPLOYED_BRANCH"
+              echo
+              echo "Potentially affected files:"
+              sed 's/^/- /' "$CONFLICTING_FILES"
+              echo
+              echo "Final decision: **BLOCKED**"
+            } >> "$GITHUB_STEP_SUMMARY"
+
+            exit 1
+          fi
+
+          echo "No overlapping changed files detected."
+          echo "Final decision: SAFE TO DEPLOY"
+
       - name: Run Python application
         run: python src/app.py
 
@@ -43,5 +142,9 @@ jobs:
           echo "Updating last deployed branch to: $DEPLOYED_BRANCH"
 
           gh variable set NCAP_NONPROD_LAST_DEPLOYED_BRANCH             --env NCAP-NONPROD             --body "$DEPLOYED_BRANCH"
+          gh variable delete NCAP_NONPROD_PENDING_RELEASE_BRANCH \
+            --env NCAP-NONPROD --yes || true
+          gh variable delete NCAP_NONPROD_PENDING_RELEASE_CREATOR \
+            --env NCAP-NONPROD --yes || true
 
           echo "Last deployed branch updated successfully."

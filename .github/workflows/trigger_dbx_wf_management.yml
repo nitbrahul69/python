@@ -51,10 +51,140 @@ jobs:
       build-type: ${{ needs.init.outputs.build-type }}
     if: success()
 
+  deployment-safety-check:
+    name: Check deployment safety
+    needs: [build-stage]
+    runs-on: ubuntu-latest
+    if: ${{ needs.build-stage.result == 'success' }}
+    environment: NCAP-NONPROD
+
+    steps:
+      - name: Checkout branch being deployed
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: Compare branch history with last deployed state
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          LAST_DEPLOYED_BRANCH: ${{ vars.NCAP_NONPROD_LAST_DEPLOYED_BRANCH }}
+          BRANCH_TO_DEPLOY: ${{ github.ref_name }}
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          set -euo pipefail
+
+          if [ "$TARGET_ENVIRONMENT" != "psup" ]; then
+            echo "Environment: $TARGET_ENVIRONMENT"
+            echo "Deployment safety comparison is required only for PSUP."
+            echo "Final decision: SAFE TO DEPLOY"
+            exit 0
+          fi
+
+          if [ -z "$LAST_DEPLOYED_BRANCH" ]; then
+            echo "ERROR: NCAP_NONPROD_LAST_DEPLOYED_BRANCH is empty."
+            echo "Final decision: BLOCKED"
+            exit 1
+          fi
+
+          if [[ ! "$LAST_DEPLOYED_BRANCH" =~ ^release/[0-9]{6}_v[0-9]+PSUP$ ]]; then
+            echo "ERROR: Invalid last deployed branch: $LAST_DEPLOYED_BRANCH"
+            echo "Expected format: release/mmddyy_v<version>PSUP"
+            echo "Final decision: BLOCKED"
+            exit 1
+          fi
+
+          if ! git ls-remote --exit-code --heads origin "$LAST_DEPLOYED_BRANCH" >/dev/null 2>&1; then
+            echo "ERROR: Last deployed branch does not exist: $LAST_DEPLOYED_BRANCH"
+            echo "Final decision: BLOCKED"
+            exit 1
+          fi
+
+          if ! git ls-remote --exit-code --heads origin "$BRANCH_TO_DEPLOY" >/dev/null 2>&1; then
+            echo "ERROR: Branch being deployed does not exist: $BRANCH_TO_DEPLOY"
+            echo "Final decision: BLOCKED"
+            exit 1
+          fi
+
+          # fetch-depth: 0 above provides complete history. Fetch explicitly as
+          # well so both branches are available even when checkout behavior
+          # changes in a future actions/checkout release.
+          git fetch --prune origin \
+            "+refs/heads/$LAST_DEPLOYED_BRANCH:refs/remotes/origin/$LAST_DEPLOYED_BRANCH" \
+            "+refs/heads/$BRANCH_TO_DEPLOY:refs/remotes/origin/$BRANCH_TO_DEPLOY"
+
+          LAST_DEPLOYED_SHA="$(git rev-parse "origin/$LAST_DEPLOYED_BRANCH")"
+          BRANCH_SHA="$(git rev-parse "origin/$BRANCH_TO_DEPLOY")"
+          BASE_SHA="$(git merge-base "$LAST_DEPLOYED_SHA" "$BRANCH_SHA")"
+
+          echo "Last deployed branch : $LAST_DEPLOYED_BRANCH"
+          echo "Last deployed commit : $LAST_DEPLOYED_SHA"
+          echo "Branch being deployed: $BRANCH_TO_DEPLOY"
+          echo "Branch commit        : $BRANCH_SHA"
+          echo "Common ancestor      : $BASE_SHA"
+
+          LAST_DEPLOYED_FILES="$(mktemp)"
+          BRANCH_FILES="$(mktemp)"
+          CONFLICTING_FILES="$(mktemp)"
+          trap 'rm -f "$LAST_DEPLOYED_FILES" "$BRANCH_FILES" "$CONFLICTING_FILES"' EXIT
+
+          git diff --name-only "$BASE_SHA" "$LAST_DEPLOYED_SHA" | sort -u > "$LAST_DEPLOYED_FILES"
+          git diff --name-only "$BASE_SHA" "$BRANCH_SHA" | sort -u > "$BRANCH_FILES"
+          comm -12 "$LAST_DEPLOYED_FILES" "$BRANCH_FILES" > "$CONFLICTING_FILES"
+
+          echo "Changed files in last deployed branch:"
+          if [ -s "$LAST_DEPLOYED_FILES" ]; then
+            sed 's/^/- /' "$LAST_DEPLOYED_FILES"
+          else
+            echo "- none"
+          fi
+
+          echo "Changed files in branch being deployed:"
+          if [ -s "$BRANCH_FILES" ]; then
+            sed 's/^/- /' "$BRANCH_FILES"
+          else
+            echo "- none"
+          fi
+
+          if [ -s "$CONFLICTING_FILES" ]; then
+            echo ""
+            echo "DEPLOYMENT WARNING:"
+            echo "This release branch was created before the latest deployment."
+            echo "Potentially conflicting changes were detected."
+            echo ""
+            echo "Branch being deployed: $BRANCH_TO_DEPLOY"
+            echo "Latest deployed branch: $LAST_DEPLOYED_BRANCH"
+            echo ""
+            echo "Potentially affected files:"
+            sed 's/^/- /' "$CONFLICTING_FILES"
+            echo ""
+            echo "Please review the changes before deployment."
+            echo "Final decision: BLOCKED"
+
+            {
+              echo "## :warning: DEPLOYMENT WARNING"
+              echo
+              echo "Potentially conflicting changes were detected."
+              echo
+              echo "- Branch being deployed: $BRANCH_TO_DEPLOY"
+              echo "- Latest deployed branch: $LAST_DEPLOYED_BRANCH"
+              echo
+              echo "Potentially affected files:"
+              sed 's/^/- /' "$CONFLICTING_FILES"
+              echo
+              echo "Final decision: **BLOCKED**"
+            } >> "$GITHUB_STEP_SUMMARY"
+
+            exit 1
+          fi
+
+          echo "No overlapping changed files detected."
+          echo "Final decision: SAFE TO DEPLOY"
+
   sn-init:
     name: Trigger Service Now ASR Management
-    if: ${{ inputs.environment == 'psup' }}
-    needs: [build-stage]
+    if: ${{ inputs.environment == 'psup' && needs.deployment-safety-check.result == 'success' }}
+    needs: [build-stage, deployment-safety-check]
     uses: CSIT/kp-asd-github-actions/.github/workflows/service_now_asr_creation_and_validation.yml@master
     secrets: inherit
     with:
