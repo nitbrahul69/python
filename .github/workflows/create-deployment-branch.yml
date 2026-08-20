@@ -2,12 +2,6 @@ name: Create Deployment Branch
 
 on:
   workflow_dispatch:
-    inputs:
-      proceed_with_increment:
-        description: "If an undeployed branch exists, create the next increment"
-        required: true
-        default: false
-        type: boolean
 
 concurrency:
   group: create-deployment-branch
@@ -63,7 +57,6 @@ jobs:
           LAST_DEPLOYED_BRANCH: ${{ steps.last-branch.outputs.last_branch }}
           PENDING_RELEASE_BRANCH: ${{ vars.NCAP_NONPROD_PENDING_RELEASE_BRANCH }}
           PENDING_RELEASE_CREATOR: ${{ vars.NCAP_NONPROD_PENDING_RELEASE_CREATOR }}
-          PROCEED_WITH_INCREMENT: ${{ inputs.proceed_with_increment }}
           GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
 
@@ -128,13 +121,8 @@ jobs:
               echo "$MESSAGE"
             } >> "$GITHUB_STEP_SUMMARY"
 
-            if [ "$PROCEED_WITH_INCREMENT" != "true" ]; then
-              echo "ERROR: Re-run this workflow with 'proceed_with_increment' enabled to create the next version."
-              exit 1
-            fi
-
             NEXT_VERSION=$((NEXT_VERSION + 1))
-            echo "Confirmation received. Checking next branch version: v${NEXT_VERSION}PSUP"
+            echo "Existing undeployed branch detected. Checking next branch version: v${NEXT_VERSION}PSUP"
           done
 
           echo "Last deployed branch: $LAST_DEPLOYED_BRANCH"
