@@ -19,9 +19,10 @@ No PAT or manually-created GITHUB_TOKEN secret is required.
 3. After successful deployment, the workflow updates:
    `NCAP_NONPROD_LAST_DEPLOYED_BRANCH`
 4. Actions -> Create Deployment Branch -> Run workflow
-5. The workflow automatically creates the next release branch using today's UTC date
+5. Leave `proceed_with_increment` disabled for the first attempt. The workflow automatically creates the next release branch using today's UTC date
    and the incremented version from the saved last-deployed branch. For example,
    `release/081726_v114PSUP` becomes `release/082026_v115PSUP` when run on August 20, 2026.
-6. The workflow creates the release and staging branches from the saved last-deployed branch.
+6. If `release/082026_v115PSUP` already exists and was not deployed on PSUP, the workflow displays a warning containing the branch and developer name.
+7. After checking with that developer, rerun the workflow with `proceed_with_increment` enabled. The workflow then creates `release/082026_v116PSUP` and its matching staging branch.
 
 The environment variable is updated only after a successful deployment.

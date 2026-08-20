@@ -2,6 +2,12 @@ name: Create Deployment Branch
 
 on:
   workflow_dispatch:
+    inputs:
+      proceed_with_increment:
+        description: "If an undeployed branch exists, create the next increment"
+        required: true
+        default: false
+        type: boolean
 
 concurrency:
   group: create-deployment-branch
@@ -55,6 +61,10 @@ jobs:
         id: branch-names
         env:
           LAST_DEPLOYED_BRANCH: ${{ steps.last-branch.outputs.last_branch }}
+          PENDING_RELEASE_BRANCH: ${{ vars.NCAP_NONPROD_PENDING_RELEASE_BRANCH }}
+          PENDING_RELEASE_CREATOR: ${{ vars.NCAP_NONPROD_PENDING_RELEASE_CREATOR }}
+          PROCEED_WITH_INCREMENT: ${{ inputs.proceed_with_increment }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
 
           # Expected format: release/mmddyy_v<version>PSUP
@@ -66,10 +76,66 @@ jobs:
 
           LAST_VERSION="${BASH_REMATCH[1]}"
           NEXT_VERSION=$((10#$LAST_VERSION + 1))
-          RELEASE_BRANCH="release/$(date -u +'%m%d%y')_v${NEXT_VERSION}PSUP"
+          while true; do
+            RELEASE_BRANCH="release/$(date -u +'%m%d%y')_v${NEXT_VERSION}PSUP"
+            STAGING_BRANCH="staging/${RELEASE_BRANCH#release/}"
 
-          # Create staging branch name
-          STAGING_BRANCH="staging/${RELEASE_BRANCH#release/}"
+            RELEASE_EXISTS=false
+            STAGING_EXISTS=false
+
+            if git ls-remote --exit-code --heads origin "$RELEASE_BRANCH" >/dev/null 2>&1; then
+              RELEASE_EXISTS=true
+            fi
+
+            if git ls-remote --exit-code --heads origin "$STAGING_BRANCH" >/dev/null 2>&1; then
+              STAGING_EXISTS=true
+            fi
+
+            if [ "$RELEASE_EXISTS" = false ] && [ "$STAGING_EXISTS" = false ]; then
+              break
+            fi
+
+            BRANCH_CREATOR="${PENDING_RELEASE_CREATOR:-unknown developer}"
+
+            if [ "$PENDING_RELEASE_BRANCH" != "$RELEASE_BRANCH" ]; then
+              BRANCH_CREATOR="unknown developer"
+            fi
+
+            # Fall back to the repository event history for branches created
+            # before the pending-branch metadata was introduced.
+            if [ "$BRANCH_CREATOR" = "unknown developer" ]; then
+              EVENTS="$(gh api --paginate \
+                -H 'Accept: application/vnd.github+json' \
+                "/repos/$GITHUB_REPOSITORY/events?per_page=100" 2>/dev/null || true)"
+
+              if [ -n "$EVENTS" ]; then
+                BRANCH_CREATOR_LOGIN="$(printf '%s\n' "$EVENTS" | jq -r --arg branch "$RELEASE_BRANCH" '
+                  .[] | select(.type == "CreateEvent" and .payload.ref_type == "branch" and .payload.ref == $branch) |
+                  .actor.login' | head -n 1)"
+
+                if [ -n "$BRANCH_CREATOR_LOGIN" ] && [ "$BRANCH_CREATOR_LOGIN" != "null" ]; then
+                  BRANCH_CREATOR="@$BRANCH_CREATOR_LOGIN"
+                fi
+              fi
+            fi
+
+            MESSAGE="The branch $RELEASE_BRANCH was not deployed on PSUP. You may revert its changes. Please check with the developer $BRANCH_CREATOR before deploying on PSUP."
+
+            echo "::warning title=Undeployed PSUP branch::$MESSAGE"
+            {
+              echo "## ⚠️ Undeployed PSUP branch detected"
+              echo
+              echo "$MESSAGE"
+            } >> "$GITHUB_STEP_SUMMARY"
+
+            if [ "$PROCEED_WITH_INCREMENT" != "true" ]; then
+              echo "ERROR: Re-run this workflow with 'proceed_with_increment' enabled to create the next version."
+              exit 1
+            fi
+
+            NEXT_VERSION=$((NEXT_VERSION + 1))
+            echo "Confirmation received. Checking next branch version: v${NEXT_VERSION}PSUP"
+          done
 
           echo "Last deployed branch: $LAST_DEPLOYED_BRANCH"
           echo "Release branch : $RELEASE_BRANCH"
@@ -77,18 +143,6 @@ jobs:
 
           echo "release_branch=$RELEASE_BRANCH" >> "$GITHUB_OUTPUT"
           echo "staging_branch=$STAGING_BRANCH" >> "$GITHUB_OUTPUT"
-
-          # Check release branch already exists
-          if git ls-remote --exit-code --heads origin "$RELEASE_BRANCH" >/dev/null 2>&1; then
-            echo "ERROR: Release branch '$RELEASE_BRANCH' already exists."
-            exit 1
-          fi
-
-          # Check staging branch already exists
-          if git ls-remote --exit-code --heads origin "$STAGING_BRANCH" >/dev/null 2>&1; then
-            echo "ERROR: Staging branch '$STAGING_BRANCH' already exists."
-            exit 1
-          fi
 
 
       # ---------------------------------------------------
@@ -130,6 +184,13 @@ jobs:
           git push origin "$STAGING_BRANCH"
 
           echo "Staging branch created successfully."
+
+          # Keep the triggering developer available for a future duplicate
+          # branch warning. This is cleared after a successful PSUP deployment.
+          gh variable set NCAP_NONPROD_PENDING_RELEASE_BRANCH \
+            --env NCAP-NONPROD --body "$RELEASE_BRANCH"
+          gh variable set NCAP_NONPROD_PENDING_RELEASE_CREATOR \
+            --env NCAP-NONPROD --body "@$GITHUB_ACTOR"
 
 
       # ---------------------------------------------------

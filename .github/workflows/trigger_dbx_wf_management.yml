@@ -86,6 +86,30 @@ jobs:
       triggered_by: ${{ github.actor }}
     secrets: inherit
 
+  update-last-deployed-branch-psup:
+    name: Update last deployed branch (PSUP)
+    needs: [Execute-DBX-WF-Management-psup]
+    runs-on: ubuntu-latest
+    if: ${{ needs.Execute-DBX-WF-Management-psup.result == 'success' }}
+    environment: NCAP-NONPROD
+
+    steps:
+      - name: Update deployed branch and clear pending branch metadata
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          DEPLOYED_BRANCH: ${{ github.ref_name }}
+        run: |
+          echo "Updating last deployed branch to: $DEPLOYED_BRANCH"
+
+          gh variable set NCAP_NONPROD_LAST_DEPLOYED_BRANCH \
+            --env NCAP-NONPROD --body "$DEPLOYED_BRANCH"
+          gh variable delete NCAP_NONPROD_PENDING_RELEASE_BRANCH \
+            --env NCAP-NONPROD --yes || true
+          gh variable delete NCAP_NONPROD_PENDING_RELEASE_CREATOR \
+            --env NCAP-NONPROD --yes || true
+
+          echo "Last deployed branch updated and pending metadata cleared."
+
   run-close-sctask:
     name: Invoke Close SCTASK (best effort)
     if: ${{ always() && inputs.environment == 'psup' && needs.sn-init.result == 'success' }}
