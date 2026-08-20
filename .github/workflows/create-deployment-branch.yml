@@ -10,6 +10,7 @@ concurrency:
 permissions:
   contents: write
   pull-requests: write
+  actions: write
 
 jobs:
   create-branches-and-pr:
@@ -138,6 +139,7 @@ jobs:
       # ---------------------------------------------------
       - name: Create release and staging branches
         env:
+          GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
           RELEASE_BRANCH: ${{ steps.branch-names.outputs.release_branch }}
           STAGING_BRANCH: ${{ steps.branch-names.outputs.staging_branch }}
         run: |
