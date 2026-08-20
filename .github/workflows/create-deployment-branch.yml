@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   create-branches-and-pr:
-    runs-on: [ self-hosted ]
+    runs-on: ubuntu-latest
 
     environment: NCAP-NONPROD
 
@@ -26,10 +26,10 @@ jobs:
       - name: Read last deployed branch
         id: last-branch
         env:
-          LAST_DEPLOYED_BRANCH: ${{ vars.NONPROD_LAST_DEPLOYED_BRANCH }}
+          LAST_DEPLOYED_BRANCH: ${{ vars.NCAP_NONPROD_LAST_DEPLOYED_BRANCH }}
         run: |
           if [ -z "$LAST_DEPLOYED_BRANCH" ]; then
-            echo "ERROR: NONPROD_LAST_DEPLOYED_BRANCH is empty."
+            echo "ERROR: NCAP_NONPROD_LAST_DEPLOYED_BRANCH is empty."
             echo "Run a successful deployment first."
             exit 1
           fi
