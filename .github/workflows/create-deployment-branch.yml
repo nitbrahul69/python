@@ -2,11 +2,10 @@ name: Create Deployment Branch
 
 on:
   workflow_dispatch:
-    inputs:
-      new_branch:
-        description: "New release branch name"
-        required: true
-        type: string
+
+concurrency:
+  group: create-deployment-branch
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -50,30 +49,34 @@ jobs:
 
 
       # ---------------------------------------------------
-      # 3. Validate release branch
+      # 3. Generate and validate release branch
       # ---------------------------------------------------
-      - name: Validate release branch
+      - name: Generate and validate release branch
+        id: branch-names
         env:
-          RELEASE_BRANCH: ${{ inputs.new_branch }}
+          LAST_DEPLOYED_BRANCH: ${{ steps.last-branch.outputs.last_branch }}
         run: |
 
-          if [ -z "$RELEASE_BRANCH" ]; then
-            echo "ERROR: Release branch name is empty."
+          # Expected format: release/mmddyy_v<version>PSUP
+          if [[ ! "$LAST_DEPLOYED_BRANCH" =~ ^release/[0-9]{6}_v([0-9]+)PSUP$ ]]; then
+            echo "ERROR: Last deployed branch '$LAST_DEPLOYED_BRANCH' does not match the expected format."
+            echo "Expected format: release/mmddyy_v<version>PSUP"
             exit 1
           fi
 
-          # Make sure release branch follows expected naming convention
-          if [[ ! "$RELEASE_BRANCH" =~ ^release/ ]]; then
-            echo "ERROR: Release branch must start with 'release/'."
-            echo "Example: release/081726_v6PSUP"
-            exit 1
-          fi
+          LAST_VERSION="${BASH_REMATCH[1]}"
+          NEXT_VERSION=$((10#$LAST_VERSION + 1))
+          RELEASE_BRANCH="release/$(date -u +'%m%d%y')_v${NEXT_VERSION}PSUP"
 
           # Create staging branch name
           STAGING_BRANCH="staging/${RELEASE_BRANCH#release/}"
 
+          echo "Last deployed branch: $LAST_DEPLOYED_BRANCH"
           echo "Release branch : $RELEASE_BRANCH"
           echo "Staging branch : $STAGING_BRANCH"
+
+          echo "release_branch=$RELEASE_BRANCH" >> "$GITHUB_OUTPUT"
+          echo "staging_branch=$STAGING_BRANCH" >> "$GITHUB_OUTPUT"
 
           # Check release branch already exists
           if git ls-remote --exit-code --heads origin "$RELEASE_BRANCH" >/dev/null 2>&1; then
@@ -93,12 +96,11 @@ jobs:
       # ---------------------------------------------------
       - name: Create release and staging branches
         env:
-          RELEASE_BRANCH: ${{ inputs.new_branch }}
+          RELEASE_BRANCH: ${{ steps.branch-names.outputs.release_branch }}
+          STAGING_BRANCH: ${{ steps.branch-names.outputs.staging_branch }}
         run: |
 
           LAST_BRANCH="${{ steps.last-branch.outputs.last_branch }}"
-
-          STAGING_BRANCH="staging/${RELEASE_BRANCH#release/}"
 
           echo "=========================================="
           echo "Source branch  : $LAST_BRANCH"
@@ -135,13 +137,12 @@ jobs:
       # ---------------------------------------------------
       - name: Annotate README on staging branch
         env:
-          RELEASE_BRANCH: ${{ inputs.new_branch }}
+          RELEASE_BRANCH: ${{ steps.branch-names.outputs.release_branch }}
+          STAGING_BRANCH: ${{ steps.branch-names.outputs.staging_branch }}
           CREATOR: ${{ github.actor }}
           ENVIRONMENT: NCAP-NONPROD
           GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
-
-          STAGING_BRANCH="staging/${RELEASE_BRANCH#release/}"
 
           echo "Annotating README on $STAGING_BRANCH to ensure PR has changes..."
 
@@ -173,10 +174,9 @@ jobs:
       - name: Create staging to release PR
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
-          RELEASE_BRANCH: ${{ inputs.new_branch }}
+          RELEASE_BRANCH: ${{ steps.branch-names.outputs.release_branch }}
+          STAGING_BRANCH: ${{ steps.branch-names.outputs.staging_branch }}
         run: |
-
-          STAGING_BRANCH="staging/${RELEASE_BRANCH#release/}"
 
           echo "Creating Pull Request..."
 
