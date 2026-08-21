@@ -88,6 +88,7 @@ jobs:
           if [ "$RELEASE_EXISTS" = false ] && [ "$STAGING_EXISTS" = false ]; then
             RELEASE_BRANCH="$CALCULATED_RELEASE"
             STAGING_BRANCH="$CALCULATED_STAGING"
+            echo "decision_required=false" >> "$GITHUB_OUTPUT"
             echo "Calculated release branch does not exist. Creating it."
           else
             echo "Calculated release branch already exists: $CALCULATED_RELEASE"
@@ -134,7 +135,9 @@ jobs:
             fi
 
             echo "No branch was created. A developer must comment /use-existing, /create-new, or /cancel on the issue."
-            exit 1
+            echo "decision_required=true" >> "$GITHUB_OUTPUT"
+            echo "Branch creation paused. Confirmation is required. See the linked GitHub Issue."
+            exit 0
           fi
 
           echo "Final release branch: $RELEASE_BRANCH"
@@ -148,6 +151,7 @@ jobs:
       # 4. Create Release and Staging branches
       # ---------------------------------------------------
       - name: Create release and staging branches
+        if: ${{ steps.branch-names.outputs.decision_required != 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
           RELEASE_BRANCH: ${{ steps.branch-names.outputs.release_branch }}
@@ -191,6 +195,7 @@ jobs:
       # 5. Annotate README on Staging branch to create a commit
       # ---------------------------------------------------
       - name: Annotate README on staging branch
+        if: ${{ steps.branch-names.outputs.decision_required != 'true' }}
         env:
           RELEASE_BRANCH: ${{ steps.branch-names.outputs.release_branch }}
           STAGING_BRANCH: ${{ steps.branch-names.outputs.staging_branch }}
@@ -227,6 +232,7 @@ jobs:
       # 6. Create Staging -> Release Pull Request
       # ---------------------------------------------------
       - name: Create staging to release PR
+        if: ${{ steps.branch-names.outputs.decision_required != 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
           RELEASE_BRANCH: ${{ steps.branch-names.outputs.release_branch }}
