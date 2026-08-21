@@ -10,8 +10,6 @@ concurrency:
 permissions:
   contents: write
   pull-requests: write
-  actions: write
-  issues: write
 
 jobs:
   create-branches-and-pr:
@@ -57,7 +55,6 @@ jobs:
         id: branch-names
         env:
           LAST_DEPLOYED_BRANCH: ${{ steps.last-branch.outputs.last_branch }}
-          GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
         run: |
 
           # Expected format: release/mmddyy_v<version>PSUP
@@ -68,77 +65,38 @@ jobs:
           fi
 
           LAST_VERSION="${BASH_REMATCH[1]}"
-          CALCULATED_VERSION=$((10#$LAST_VERSION + 1))
+          NEXT_VERSION=$((10#$LAST_VERSION + 1))
           DATE_PREFIX="$(date -u +'%m%d%y')"
-          CALCULATED_RELEASE="release/${DATE_PREFIX}_v${CALCULATED_VERSION}PSUP"
-          CALCULATED_STAGING="staging/${DATE_PREFIX}_v${CALCULATED_VERSION}PSUP"
-
           echo "Last deployed branch: $LAST_DEPLOYED_BRANCH"
-          echo "Calculated next branch: $CALCULATED_RELEASE"
+          while true; do
+            RELEASE_BRANCH="release/${DATE_PREFIX}_v${NEXT_VERSION}PSUP"
+            STAGING_BRANCH="staging/${DATE_PREFIX}_v${NEXT_VERSION}PSUP"
 
-          RELEASE_EXISTS=false
-          STAGING_EXISTS=false
-          if git ls-remote --exit-code --heads origin "$CALCULATED_RELEASE" >/dev/null 2>&1; then
-            RELEASE_EXISTS=true
-          fi
-          if git ls-remote --exit-code --heads origin "$CALCULATED_STAGING" >/dev/null 2>&1; then
-            STAGING_EXISTS=true
-          fi
+            RELEASE_EXISTS=false
+            STAGING_EXISTS=false
 
-          if [ "$RELEASE_EXISTS" = false ] && [ "$STAGING_EXISTS" = false ]; then
-            RELEASE_BRANCH="$CALCULATED_RELEASE"
-            STAGING_BRANCH="$CALCULATED_STAGING"
-            echo "decision_required=false" >> "$GITHUB_OUTPUT"
-            echo "Calculated release branch does not exist. Creating it."
-          else
-            echo "Calculated release branch already exists: $CALCULATED_RELEASE"
-            NEW_VERSION=$((CALCULATED_VERSION + 1))
-            NEXT_RELEASE="release/${DATE_PREFIX}_v${NEW_VERSION}PSUP"
-            NEXT_STAGING="staging/${DATE_PREFIX}_v${NEW_VERSION}PSUP"
-            ISSUE_TITLE="Release branch decision required: $CALCULATED_RELEASE"
-
-            EXISTING_ISSUE="$(gh issue list \
-              --repo "$GITHUB_REPOSITORY" \
-              --state open \
-              --search "$ISSUE_TITLE in:title" \
-              --json number \
-              --jq '.[0].number' 2>/dev/null || true)"
-
-            if [ -z "$EXISTING_ISSUE" ]; then
-              ISSUE_BODY="$(printf '%s\n' \
-                '⚠️ **Release Branch Already Exists**' \
-                '' \
-                'The calculated release branch is:' \
-                '' \
-                "**$CALCULATED_RELEASE**" \
-                '' \
-                'However, this branch already exists.' \
-                '' \
-                'Please choose what you want to do by commenting one of these commands on this issue:' \
-                '' \
-                '1. **/use-existing** — use the existing release branch.' \
-                "2. **/create-new** — create exactly **$NEXT_RELEASE**." \
-                '3. **/cancel** — stop without creating a new branch.' \
-                '' \
-                "Existing staging branch: **$CALCULATED_STAGING**" \
-                "Next staging branch if approved: **$NEXT_STAGING**" \
-                '' \
-                'The workflow stopped before modifying either existing branch.')"
-
-              ISSUE_URL="$(gh issue create \
-                --repo "$GITHUB_REPOSITORY" \
-                --title "$ISSUE_TITLE" \
-                --body "$ISSUE_BODY")"
-              echo "Confirmation issue created: $ISSUE_URL"
-            else
-              echo "An open confirmation issue already exists: https://github.com/$GITHUB_REPOSITORY/issues/$EXISTING_ISSUE"
+            if git ls-remote --exit-code --heads origin "$RELEASE_BRANCH" >/dev/null 2>&1; then
+              RELEASE_EXISTS=true
             fi
 
-            echo "No branch was created. A developer must comment /use-existing, /create-new, or /cancel on the issue."
-            echo "decision_required=true" >> "$GITHUB_OUTPUT"
-            echo "Branch creation paused. Confirmation is required. See the linked GitHub Issue."
-            exit 0
-          fi
+            if git ls-remote --exit-code --heads origin "$STAGING_BRANCH" >/dev/null 2>&1; then
+              STAGING_EXISTS=true
+            fi
+
+            if [ "$RELEASE_EXISTS" = false ] && [ "$STAGING_EXISTS" = false ]; then
+              echo "Calculated branch is available: $RELEASE_BRANCH"
+              break
+            fi
+
+            MESSAGE="The calculated release branch $RELEASE_BRANCH already exists. If your changes belong to $RELEASE_BRANCH, please consider using or merging into the existing branch. Otherwise, this workflow will create the next release branch."
+            echo "::warning title=Release branch already exists::$MESSAGE"
+            echo "⚠️ WARNING: The calculated release branch already exists."
+            echo "Existing branch: $RELEASE_BRANCH"
+            echo "If your changes belong to $RELEASE_BRANCH, please consider using/merging into the existing branch."
+            echo "Otherwise, this workflow will create the next release branch."
+
+            NEXT_VERSION=$((NEXT_VERSION + 1))
+          done
 
           echo "Final release branch: $RELEASE_BRANCH"
           echo "Final staging branch: $STAGING_BRANCH"
@@ -151,9 +109,7 @@ jobs:
       # 4. Create Release and Staging branches
       # ---------------------------------------------------
       - name: Create release and staging branches
-        if: ${{ steps.branch-names.outputs.decision_required != 'true' }}
         env:
-          GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
           RELEASE_BRANCH: ${{ steps.branch-names.outputs.release_branch }}
           STAGING_BRANCH: ${{ steps.branch-names.outputs.staging_branch }}
         run: |
@@ -185,17 +141,10 @@ jobs:
 
           echo "Staging branch ready: $STAGING_BRANCH"
 
-          gh variable set NCAP_NONPROD_PENDING_RELEASE_BRANCH \
-            --env NCAP-NONPROD --body "$RELEASE_BRANCH"
-          gh variable set NCAP_NONPROD_PENDING_RELEASE_CREATOR \
-            --env NCAP-NONPROD --body "@$GITHUB_ACTOR"
-
-
       # ---------------------------------------------------
       # 5. Annotate README on Staging branch to create a commit
       # ---------------------------------------------------
       - name: Annotate README on staging branch
-        if: ${{ steps.branch-names.outputs.decision_required != 'true' }}
         env:
           RELEASE_BRANCH: ${{ steps.branch-names.outputs.release_branch }}
           STAGING_BRANCH: ${{ steps.branch-names.outputs.staging_branch }}
@@ -232,7 +181,6 @@ jobs:
       # 6. Create Staging -> Release Pull Request
       # ---------------------------------------------------
       - name: Create staging to release PR
-        if: ${{ steps.branch-names.outputs.decision_required != 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GH_PAT || github.token }}
           RELEASE_BRANCH: ${{ steps.branch-names.outputs.release_branch }}

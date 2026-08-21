@@ -142,9 +142,5 @@ jobs:
           echo "Updating last deployed branch to: $DEPLOYED_BRANCH"
 
           gh variable set NCAP_NONPROD_LAST_DEPLOYED_BRANCH             --env NCAP-NONPROD             --body "$DEPLOYED_BRANCH"
-          gh variable delete NCAP_NONPROD_PENDING_RELEASE_BRANCH \
-            --env NCAP-NONPROD --yes || true
-          gh variable delete NCAP_NONPROD_PENDING_RELEASE_CREATOR \
-            --env NCAP-NONPROD --yes || true
 
           echo "Last deployed branch updated successfully."
