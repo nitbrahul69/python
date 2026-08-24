@@ -29,3 +29,4 @@ The environment variable is updated only after a successful deployment.
 |---|---|---|---|
 | 2026-08-19 13:38:57Z | NCAP-NONPROD | staging/081726_v111PSUP | nitbrahul69 |
 | 2026-08-24 14:35:05Z | NCAP-NONPROD | staging/082426_v122PSUP | nitbrahul69 |
+| 2026-08-24 17:18:28Z | NCAP-NONPROD | staging/082426_v123PSUP | nitbrahul69 |
